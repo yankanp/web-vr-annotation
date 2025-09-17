@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Annotation App</title>
+</head>
+<body>
+<h2>Annotation App</h2>
+<video id="vrVideo" autoplay playsinline width="640" height="480" controls></video>
+<br/>
+<canvas id="drawCanvas" width="640" height="480" style="border:1px solid black;"></canvas>
+
+<script>
+const video = document.getElementById("vrVideo");
+const canvas = document.getElementById("drawCanvas");
+const ctx = canvas.getContext("2d");
+
+const ws = new WebSocket("wss://08e6b6740dd4.ngrok-free.app"); // replace with ngrok HTTPS WSS URL
+let pc = new RTCPeerConnection();
+
+ws.onopen = () => {
+  console.log("Annotation connected to signaling server");
+  ws.send(JSON.stringify({ type: "register", role: "annotation" }));
+  startStream();
+};
+
+pc.ontrack = e => {
+  console.log("Annotation: got remote stream");
+  video.srcObject = e.streams[0];
+};
+
+pc.onicecandidate = e => {
+  if (e.candidate) ws.send(JSON.stringify({ type: "ice", role: "annotation", candidate: e.candidate }));
+};
+
+async function startStream() {
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  ws.send(JSON.stringify({ type: "offer", offer }));
+  console.log("Annotation: sent offer");
+}
+
+ws.onmessage = async (event) => {
+  const data = JSON.parse(event.data);
+  console.log("Annotation received:", data.type);
+
+  if (data.type === "answer") {
+    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+    console.log("Annotation: set remote answer");
+  } else if (data.type === "ice") {
+    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+  }
+};
+
+// Drawing annotations
+let drawing = false;
+canvas.addEventListener("mousedown", (e) => { drawing = true; draw(e); });
+canvas.addEventListener("mouseup", () => drawing = false);
+canvas.addEventListener("mousemove", draw);
+
+function draw(e) {
+  if (!drawing) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  ctx.fillStyle = "red";
+  ctx.fillRect(x, y, 5, 5);
+
+  ws.send(JSON.stringify({
+    type: "annotation",
+    x: (x / 640) * 4 - 2,
+    y: 1.5,
+    z: (y / 480) * 4 - 2
+  }));
+}
+</script>
+</body>
+</html>
