@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Annotation App</title>
+</head>
+<body>
+<h2>Annotation App</h2>
+
+<!-- Video as background -->
+<div style="position: relative; display: inline-block;">
+  <video id="vrVideo" autoplay playsinline width="640" height="480" style="position: absolute; left:0; top:0;"></video>
+  <canvas id="drawCanvas" width="640" height="480" style="position: absolute; left:0; top:0; border:1px solid black;"></canvas>
+</div>
+
+<script>
+const video = document.getElementById("vrVideo");
+const canvas = document.getElementById("drawCanvas");
+const ctx = canvas.getContext("2d");
+
+const ws = new WebSocket("wss://localhost:8080");
+let pc = new RTCPeerConnection({
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+});
+
+ws.onopen = () => {
+  console.log("Annotation connected to signaling server");
+  ws.send(JSON.stringify({ type: "register", role: "annotation" }));
+};
+
+pc.ontrack = e => {
+  console.log("Annotation: got remote stream");
+  video.srcObject = e.streams[0];
+};
+
+pc.onicecandidate = e => {
+  if (e.candidate) ws.send(JSON.stringify({ type: "ice", role: "annotation", candidate: e.candidate }));
+};
+
+ws.onmessage = async (event) => {
+  const data = JSON.parse(event.data);
+  console.log("Annotation received:", data.type);
+
+  if (data.type === "offer") {
+    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    ws.send(JSON.stringify({ type: "answer", role: "annotation", answer }));
+    console.log("Annotation: sent answer");
+  } else if (data.type === "ice") {
+    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+  }
+};
+
+// --- Drawing annotations ---
+let drawing = false;
+
+canvas.addEventListener("mousedown", (e) => {
+  drawing = true;
+  const { x, y } = getPos(e);
+
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+
+  ws.send(JSON.stringify({
+    type: "annotation",
+    action: "start",
+    x: (x/640)*4 - 2,
+    y: 1.5,
+    z: (y/480)*4 - 2
+  }));
+});
+
+canvas.addEventListener("mouseup", () => {
+  drawing = false;
+  ws.send(JSON.stringify({ type: "annotation", action: "end" }));
+});
+
+canvas.addEventListener("mousemove", (e) => {
+  if (!drawing) return;
+  const { x, y } = getPos(e);
+
+  ctx.strokeStyle = "red";
+  ctx.lineWidth = 3;
+  ctx.lineTo(x, y);
+  ctx.stroke();
+
+  ws.send(JSON.stringify({
+    type: "annotation",
+    action: "draw",
+    x: (x/640)*4 - 2,
+    y: 1.5,
+    z: (y/480)*4 - 2
+  }));
+});
+
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+</script>
+</body>
+</html>

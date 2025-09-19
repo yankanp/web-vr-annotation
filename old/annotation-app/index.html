@@ -15,13 +15,14 @@ const video = document.getElementById("vrVideo");
 const canvas = document.getElementById("drawCanvas");
 const ctx = canvas.getContext("2d");
 
-const ws = new WebSocket("wss://08e6b6740dd4.ngrok-free.app"); // replace with ngrok HTTPS WSS URL
-let pc = new RTCPeerConnection();
+const ws = new WebSocket("ws://0.0.0.0:8080");
+let pc = new RTCPeerConnection({
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+});
 
 ws.onopen = () => {
   console.log("Annotation connected to signaling server");
   ws.send(JSON.stringify({ type: "register", role: "annotation" }));
-  startStream();
 };
 
 pc.ontrack = e => {
@@ -33,26 +34,22 @@ pc.onicecandidate = e => {
   if (e.candidate) ws.send(JSON.stringify({ type: "ice", role: "annotation", candidate: e.candidate }));
 };
 
-async function startStream() {
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  ws.send(JSON.stringify({ type: "offer", offer }));
-  console.log("Annotation: sent offer");
-}
-
 ws.onmessage = async (event) => {
   const data = JSON.parse(event.data);
   console.log("Annotation received:", data.type);
 
-  if (data.type === "answer") {
-    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-    console.log("Annotation: set remote answer");
+  if (data.type === "offer") {
+    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    ws.send(JSON.stringify({ type: "answer", role: "annotation", answer }));
+    console.log("Annotation: sent answer");
   } else if (data.type === "ice") {
     await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
   }
 };
 
-// Drawing annotations
+// --- Drawing annotations ---
 let drawing = false;
 canvas.addEventListener("mousedown", (e) => { drawing = true; draw(e); });
 canvas.addEventListener("mouseup", () => drawing = false);
@@ -67,6 +64,7 @@ function draw(e) {
   ctx.fillStyle = "red";
   ctx.fillRect(x, y, 5, 5);
 
+  // Send annotation in VR world coordinates
   ws.send(JSON.stringify({
     type: "annotation",
     x: (x / 640) * 4 - 2,

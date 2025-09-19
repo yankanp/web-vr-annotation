@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>VR App</title>
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+</head>
+<body>
+<canvas id="renderCanvas" style="width:100%; height:100%;"></canvas>
+<script>
+const canvas = document.getElementById("renderCanvas");
+const engine = new BABYLON.Engine(canvas, true);
+const scene = new BABYLON.Scene(engine);
+
+// Scene
+new BABYLON.HemisphericLight("light", new BABYLON.Vector3(1,1,0), scene);
+const ground = BABYLON.MeshBuilder.CreateGround("ground", {width:10, height:10}, scene);
+for (let i=0;i<5;i++){
+  let box = BABYLON.MeshBuilder.CreateBox("b"+i,{size:0.3},scene);
+  box.position.set(Math.random()*2-1,1.5,Math.random()*2-1);
+}
+
+// WebXR
+scene.createDefaultXRExperienceAsync({ floorMeshes: [ground] });
+
+// --- WebRTC + WS ---
+const ws = new WebSocket("wss://0.0.0.0:8080");
+let pc = new RTCPeerConnection({
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+});
+
+ws.onopen = () => {
+  console.log("VR connected to signaling server");
+  ws.send(JSON.stringify({ type:"register", role:"vr" }));
+
+  // Capture VR canvas
+  const stream = canvas.captureStream(30);
+  stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+  // Create and send offer
+  startStream();
+};
+
+pc.onicecandidate = e=>{
+  if(e.candidate){
+    ws.send(JSON.stringify({ type:"ice", role:"vr", candidate:e.candidate }));
+  }
+};
+
+ws.onmessage = async (event)=>{
+  const data = JSON.parse(event.data);
+  console.log("VR received:", data.type);
+
+  if(data.type==="answer"){
+    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+    console.log("VR: set remote answer");
+  }
+  else if(data.type==="ice"){
+    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+  }
+  else if(data.type==="annotation"){
+    // Draw annotation in VR space
+    let arrow = BABYLON.MeshBuilder.CreateCylinder("arrow",{diameterTop:0,diameterBottom:0.1,height:0.5},scene);
+    arrow.position = new BABYLON.Vector3(data.x,data.y,data.z);
+    let mat = new BABYLON.StandardMaterial("m",scene);
+    mat.diffuseColor = new BABYLON.Color3(1,0,0);
+    arrow.material = mat;
+  }
+};
+
+async function startStream() {
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  ws.send(JSON.stringify({ type:"offer", role:"vr", offer }));
+  console.log("VR: sent offer");
+}
+
+engine.runRenderLoop(()=>scene.render());
+</script>
+</body>
+</html>
