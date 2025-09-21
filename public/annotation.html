@@ -7,29 +7,32 @@
 <body>
 <h2>Annotation App</h2>
 
-<!-- Video as background -->
 <div style="position: relative; display: inline-block;">
-  <video id="vrVideo" autoplay playsinline width="640" height="480" style="position: absolute; left:0; top:0;"></video>
-  <canvas id="drawCanvas" width="640" height="480" style="position: absolute; left:0; top:0; border:1px solid black;"></canvas>
+  <!-- Quest casting stream will appear here -->
+  <video id="vrVideo" autoplay playsinline muted width="640" height="480" style="background:black;"></video>
+  <canvas id="drawCanvas" width="640" height="480" style="position: absolute; left:0; top:0; border:1px solid red;"></canvas>
 </div>
+
+<button id="captureBtn">🎥 Capture Quest Casting Tab</button>
 
 <script>
 const video = document.getElementById("vrVideo");
 const canvas = document.getElementById("drawCanvas");
 const ctx = canvas.getContext("2d");
+const captureBtn = document.getElementById("captureBtn");
 
+// --- WebSocket + WebRTC ---
 const ws = new WebSocket(`wss://${window.location.host}`);
 let pc = new RTCPeerConnection({
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 });
 
 ws.onopen = () => {
-  console.log("Annotation connected to signaling server");
   ws.send(JSON.stringify({ type: "register", role: "annotation" }));
 };
 
 pc.ontrack = e => {
-  console.log("Annotation: got remote stream");
+  // (Optional) If VR app streams something, display it
   video.srcObject = e.streams[0];
 };
 
@@ -39,60 +42,57 @@ pc.onicecandidate = e => {
 
 ws.onmessage = async (event) => {
   const data = JSON.parse(event.data);
-  console.log("Annotation received:", data.type);
-
   if (data.type === "offer") {
     await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     ws.send(JSON.stringify({ type: "answer", role: "annotation", answer }));
-    console.log("Annotation: sent answer");
   } else if (data.type === "ice") {
     await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
   }
 };
 
+// --- Capture Quest Casting tab ---
+captureBtn.addEventListener("click", async () => {
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: false
+    });
+    video.srcObject = stream; // Show headset casting video
+    console.log("✅ Capturing Quest casting stream:", stream.getTracks());
+  } catch (err) {
+    console.error("❌ Screen capture failed:", err);
+  }
+});
+
 // --- Drawing annotations ---
 let drawing = false;
-
 canvas.addEventListener("mousedown", (e) => {
   drawing = true;
   const { x, y } = getPos(e);
-
   ctx.beginPath();
   ctx.moveTo(x, y);
-
-  ws.send(JSON.stringify({
-    type: "annotation",
-    action: "start",
-    x: (x/640)*4 - 2,
-    y: 1.5,
-    z: (y/480)*4 - 2
-  }));
+  sendAnnotation(x, y);
 });
-
-canvas.addEventListener("mouseup", () => {
-  drawing = false;
-  ws.send(JSON.stringify({ type: "annotation", action: "end" }));
-});
-
+canvas.addEventListener("mouseup", () => drawing = false);
 canvas.addEventListener("mousemove", (e) => {
   if (!drawing) return;
   const { x, y } = getPos(e);
-
   ctx.strokeStyle = "red";
   ctx.lineWidth = 3;
   ctx.lineTo(x, y);
   ctx.stroke();
+  sendAnnotation(x, y);
+});
 
+function sendAnnotation(x, y) {
   ws.send(JSON.stringify({
     type: "annotation",
-    action: "draw",
-    x: (x/640)*4 - 2,
-    y: 1.5,
-    z: (y/480)*4 - 2
+    x: x / canvas.width,
+    y: y / canvas.height
   }));
-});
+}
 
 function getPos(e) {
   const rect = canvas.getBoundingClientRect();
