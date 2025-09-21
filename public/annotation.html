@@ -8,18 +8,27 @@
 <h2>Annotation App</h2>
 
 <div style="position: relative; display: inline-block;">
-  <!-- Quest casting stream will appear here -->
+  <!-- Quest casting video -->
   <video id="vrVideo" autoplay playsinline muted width="640" height="480" style="background:black;"></video>
-  <canvas id="drawCanvas" width="640" height="480" style="position: absolute; left:0; top:0; border:1px solid red;"></canvas>
+  <!-- Transparent click layer -->
+  <canvas id="drawCanvas" width="640" height="480" style="position: absolute; left:0; top:0; cursor: crosshair;"></canvas>
 </div>
 
-<button id="captureBtn">🎥 Capture Quest Casting Tab</button>
+<div style="margin-top:10px;">
+  <button id="captureBtn">🎥 Capture Quest Casting Tab</button>
+</div>
+
+<div style="margin-top:10px;">
+  <input id="textInput" type="text" placeholder="Enter message" style="width:300px;"/>
+  <button id="sendTextBtn">💬 Send Text</button>
+</div>
 
 <script>
 const video = document.getElementById("vrVideo");
 const canvas = document.getElementById("drawCanvas");
-const ctx = canvas.getContext("2d");
 const captureBtn = document.getElementById("captureBtn");
+const sendTextBtn = document.getElementById("sendTextBtn");
+const textInput = document.getElementById("textInput");
 
 // --- WebSocket + WebRTC ---
 const ws = new WebSocket(`wss://${window.location.host}`);
@@ -32,7 +41,6 @@ ws.onopen = () => {
 };
 
 pc.ontrack = e => {
-  // (Optional) If VR app streams something, display it
   video.srcObject = e.streams[0];
 };
 
@@ -59,45 +67,49 @@ captureBtn.addEventListener("click", async () => {
       video: true,
       audio: false
     });
-    video.srcObject = stream; // Show headset casting video
+    video.srcObject = stream;
     console.log("✅ Capturing Quest casting stream:", stream.getTracks());
   } catch (err) {
     console.error("❌ Screen capture failed:", err);
   }
 });
 
-// --- Drawing annotations ---
+// --- Annotation sending ---
 let drawing = false;
+
 canvas.addEventListener("mousedown", (e) => {
   drawing = true;
-  const { x, y } = getPos(e);
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  sendAnnotation(x, y);
-});
-canvas.addEventListener("mouseup", () => drawing = false);
-canvas.addEventListener("mousemove", (e) => {
-  if (!drawing) return;
-  const { x, y } = getPos(e);
-  ctx.strokeStyle = "red";
-  ctx.lineWidth = 3;
-  ctx.lineTo(x, y);
-  ctx.stroke();
-  sendAnnotation(x, y);
+  send(e);
 });
 
-function sendAnnotation(x, y) {
+canvas.addEventListener("mouseup", () => drawing = false);
+
+canvas.addEventListener("mousemove", (e) => {
+  if (drawing) send(e);
+});
+
+function send(e) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / canvas.width;
+  const y = (e.clientY - rect.top) / canvas.height;
+
   ws.send(JSON.stringify({
     type: "annotation",
-    x: x / canvas.width,
-    y: y / canvas.height
+    x,
+    y
   }));
 }
 
-function getPos(e) {
-  const rect = canvas.getBoundingClientRect();
-  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-}
+// --- Send typed text ---
+sendTextBtn.addEventListener("click", () => {
+  const msg = textInput.value.trim();
+  if (!msg) return;
+  ws.send(JSON.stringify({
+    type: "text",
+    text: msg
+  }));
+  textInput.value = "";
+});
 </script>
 </body>
 </html>

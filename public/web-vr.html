@@ -45,6 +45,9 @@ pc.onicecandidate = e=>{
   }
 };
 
+// Track active stacked messages
+let activeMessages = [];
+
 ws.onmessage = async (event)=>{
   const data = JSON.parse(event.data);
 
@@ -55,13 +58,16 @@ ws.onmessage = async (event)=>{
     await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
   }
   else if(data.type==="annotation"){
-    // Convert 2D annotation coords into 3D arrow position
-    const pickRay = scene.activeCamera.getPickRay(data.x * canvas.width, data.y * canvas.height);
+    // ✅ FIX: use render size for picking
+    const screenX = data.x * engine.getRenderWidth();
+    const screenY = data.y * engine.getRenderHeight();
+
+    const pickRay = scene.createPickingRay(screenX, screenY, BABYLON.Matrix.Identity(), scene.activeCamera);
     const hit = scene.pickWithRay(pickRay);
 
     let pos;
     if (hit.pickedPoint) {
-      pos = hit.pickedPoint.add(new BABYLON.Vector3(0,0.2,0)); // slightly above hit
+      pos = hit.pickedPoint.add(new BABYLON.Vector3(0,0.2,0));
     } else {
       pos = scene.activeCamera.position.add(
         scene.activeCamera.getDirection(BABYLON.Axis.Z).scale(2)
@@ -73,6 +79,47 @@ ws.onmessage = async (event)=>{
     const mat = new BABYLON.StandardMaterial("m",scene);
     mat.diffuseColor = new BABYLON.Color3(1,0,0);
     arrow.material = mat;
+
+    // Optional: auto-remove after 5s
+    setTimeout(() => arrow.dispose(), 5000);
+  }
+  else if (data.type === "text") {
+    // --- Floating text in front of the user ---
+    const plane = BABYLON.MeshBuilder.CreatePlane("textPlane", { size: 1.5 }, scene);
+
+    const basePos = scene.activeCamera.position.add(
+      scene.activeCamera.getDirection(BABYLON.Axis.Z).scale(2)
+    );
+
+    const offsetY = -0.5 * activeMessages.length;
+    plane.position = basePos.add(new BABYLON.Vector3(0, offsetY, 0));
+
+    plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+
+    const dynamicTexture = new BABYLON.DynamicTexture("DynamicTexture", {width:512, height:256}, scene, true);
+    dynamicTexture.drawText(data.text, null, 140, "bold 60px Arial", "white", "transparent", true);
+
+    const mat = new BABYLON.StandardMaterial("textMat", scene);
+    mat.diffuseTexture = dynamicTexture;
+    mat.emissiveColor = new BABYLON.Color3(1, 1, 1);
+    mat.alpha = 1;
+    plane.material = mat;
+
+    activeMessages.push({ plane, mat, dynamicTexture });
+
+    // Smooth fade-out after 3s
+    setTimeout(() => {
+      scene.registerBeforeRender(() => {
+        if (mat.alpha > 0) {
+          mat.alpha -= 0.02;
+          if (mat.alpha <= 0) {
+            plane.dispose();
+            dynamicTexture.dispose();
+            activeMessages = activeMessages.filter(m => m.plane !== plane);
+          }
+        }
+      });
+    }, 3000);
   }
 };
 

@@ -41,8 +41,13 @@ wss.on("connection", (ws) => {
       if (data.role === "annotation" && vrClient) vrClient.send(JSON.stringify(data));
     }
 
-    // Forward annotation messages to VR app
+    // Forward annotation messages
     if (data.type === "annotation" && vrClient) {
+      vrClient.send(JSON.stringify(data));
+    }
+
+    // Forward text messages
+    if (data.type === "text" && vrClient) {
       vrClient.send(JSON.stringify(data));
     }
   });
